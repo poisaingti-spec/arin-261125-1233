@@ -40,7 +40,17 @@ TOOLS: use Read, Grep, Glob and Bash on the attached files. The manifest and the
 TASK:'
 
 clean() {
-  printf '%s\n' "@1" | awk 'NR==1 && tolower(@0) ~ /(i can.?t|unfortunately|note that|for personal use only|this may vary)/ {next} {print}'
+  printf '%s\n' "@1" | awk '
+    { line[NR]=@0 }
+    END {
+      s=1
+      while (s<=NR) {
+        l=tolower(line[s])
+        if (l ~ /^[[:space:]]*@/ || l ~ /i can/ || l ~ /i cannot/ || l ~ /unfortunately/ || l ~ /note that/ || l ~ /for personal use only/ || l ~ /this may vary/ || l ~ /^(sure|certainly|here is|here are)/) { s++ } else { break }
+      }
+      if (s>NR) s=NR
+      for (i=s; i<=NR; i++) print line[i]
+    }'
 }
 
 hedged() {
@@ -97,13 +107,26 @@ function ask(question, files) {
     const qf = '/root/.arin/.mcp-q.txt';
     fs.writeFileSync(qf, question);
     const args = ['/root/.arin/analyst.sh', '-q', qf];
-    (files || []).slice(0, 3).forEach(f => { args.push('-f', String(f)); });
+    files.slice(0, 3).forEach(f => { args.push('-f', String(f)); });
     const p = spawn('bash', args);
     let out = ''; let err = '';
     p.stdout.on('data', d => out += d);
     p.stderr.on('data', d => err += d);
     p.on('close', code => resolve({ code, out, err }));
   });
+}
+
+function gather(args) {
+  const files = [];
+  const push = f => {
+    const p = String(f).replace(/:\d+(-\d+)?\@/, '');
+    if (!p) return;
+    try { if (!fs.existsSync(p)) return; } catch { return; }
+    if (!files.includes(p)) files.push(p);
+  };
+  if (args.file) push(args.file);
+  if (Array.isArray(args.files)) args.files.forEach(push);
+  return files;
 }
 
 function handle(line) {
@@ -117,16 +140,35 @@ function handle(line) {
     return reply({ jsonrpc: '2.0', id, result: { tools: [{
       name: 'analyst_ask',
       description: 'Ask Claude one code question about attached files. Stateless, one shot, ~280s.',
-      inputSchema: { type: 'object', properties: { question: { type: 'string' }, files: { type: 'array', items: { type: 'string' } } }, required: ['question'] }
+      inputSchema: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'One code question.' },
+          file: { type: 'string', description: 'Absolute path under /root/files to read.' },
+          lines: { type: 'string', description: 'Line or range, e.g. 120 or 120-168.' },
+          files: { type: 'array', items: { type: 'string' }, description: 'More absolute paths.' }
+        },
+        required: ['question']
+      }
     }] } });
   }
   if (msg.method === 'tools/call') {
-    if (msg.params && msg.params.name !== 'analyst_ask') {
+    if (!msg.params || msg.params.name !== 'analyst_ask') {
       return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'unknown tool' }] } });
     }
-    const a = (msg.params && msg.params.arguments) || {};
-    return ask(String(a.question || ''), a.files).then(r => {
-      const text = (r.out || '').trim() || (r.err || '').trim() || 'Claude unreachable — carrying on without it';
+    const a = msg.params.arguments || {};
+    const q = String(a.question || '').trim();
+    if (!q) {
+      return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'analyst_ask needs a question: { "question": "what does this method verify?", "file": "/root/files/..." }' }], isError: true } });
+    }
+    const files = gather(a);
+    const question = a.lines ? (q + '\nLines: ' + String(a.lines)) : q;
+    if (files.length === 0) {
+      question === q;
+    }
+    return ask(question, files).then(r => {
+      let text = (r.out || '').trim() || (r.err || '').trim() || 'Claude unreachable — carrying on without it';
+      if (files.length === 0) text = '(no readable file was named - attach a path under /root/files next time)\n' + text;
       reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: r.code !== 0 } });
     });
   }
@@ -180,6 +222,10 @@ server.listen(PORT, '127.0.0.1', () => console.log('bridge on ' + PORT));
 set -uo pipefail
 ARIN=/root/.arin
 PORT=8791
+if curl -fsS "http://127.0.0.1:@PORT/health" >/dev/null 2>&1; then
+  echo "bridge up on @PORT"
+  exit 0
+fi
 pkill -f "mcp-bridge.mjs" 2>/dev/null
 sleep 0.4
 cd @ARIN || exit 1
@@ -202,11 +248,12 @@ description: Ask Claude one code question through the analyst lane.
 # arin-analyst
 
 Tool: `analyst_ask`
-Arguments: `{ "question": string, "files": string[] }`
+Arguments: `{ "question": string, "file": string, "lines": string }` - question is required, file and lines are the evidence.
 Files are absolute paths under /root/files. Never call the shell path /root/.arin/analyst.sh from a tab - the tab has no shell.
 
 Rules
 - One question per call. Code questions only: what a method verifies, where a check lives, what breaks if X changes, the exact patch, a hook point, grep patterns.
+- Ask FIRST on any smali/dex/native/obfuscated question. Never ask permission first.
 - Not for: running apktool/jadx, signing, listing files, install/test, logcat, build errors, plain Android questions.
 - Max 6 calls per turn (3 in the Update Arin tab). On failure retry once, then do the work by hand and mark it.
 - The answer is a lead: verify .locals and the surrounding opcodes before applying a patch.
@@ -223,9 +270,10 @@ Display
         """<!-- arin-analyst:begin -->
 ## Analyst lane
 
-Use the `analyst` MCP server, tool `analyst_ask`, arguments `{ "question": string, "files": string[] }` (absolute paths under /root/files).
-Code questions only. Max 6 per turn, 3 in the Update Arin tab. One retry on failure, then do it by hand and say so.
+Use the `analyst` MCP server, tool `analyst_ask`, arguments `{ "question": string, "file": string, "lines": string }` (absolute paths under /root/files).
+Ask first on any smali/dex/native/obfuscated question. Code questions only. Max 6 per turn, 3 in the Update Arin tab. One retry on failure, then do it by hand and say so.
 Never shell out to /root/.arin/analyst.sh from a tab - the tab has no shell.
+Analyst output is a lead: verify .locals and the surrounding opcodes before applying a patch.
 <!-- arin-analyst:end -->
 """
 }

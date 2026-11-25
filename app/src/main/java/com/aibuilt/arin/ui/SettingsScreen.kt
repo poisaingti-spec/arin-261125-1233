@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,17 +29,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aibuilt.arin.data.AppContainer
-import com.aibuilt.arin.data.AnalystInstall
-import com.aibuilt.arin.model.Tab
-import kotlinx.coroutines.launch
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.aibuilt.arin.data.AnalystInstall
+import com.aibuilt.arin.data.AppContainer
+import com.aibuilt.arin.data.Prefs
+import com.aibuilt.arin.model.Tab
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import com.aibuilt.arin.data.Prefs
+import kotlinx.coroutines.launch
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
@@ -119,7 +121,13 @@ fun SettingsScreen(container: AppContainer) {
     var mRea by remember(ui.prefs.modelRea) { mutableStateOf(ui.prefs.modelRea) }
     var mUpd by remember(ui.prefs.modelUpdate) { mutableStateOf(ui.prefs.modelUpdate) }
     var gh by remember(ui.prefs.ghToken) { mutableStateOf(ui.prefs.ghToken) }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    LaunchedEffect(ui.saved) {
+        if (ui.saved != null) {
+            delay(2500)
+            vm.clearNote()
+        }
+    }
 
     Column(
         Modifier
@@ -144,10 +152,7 @@ fun SettingsScreen(container: AppContainer) {
         OutlinedTextField(value = mUpd, onValueChange = { mUpd = it }, label = { Text("Update Arin model") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
         Button(onClick = { vm.save(base, key, mChat, mRea, mUpd) }) { Text("Save model settings") }
-        ui.saved?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall)
-            scope.launch { }
-        }
+        ui.saved?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 
         HorizontalDivider()
 

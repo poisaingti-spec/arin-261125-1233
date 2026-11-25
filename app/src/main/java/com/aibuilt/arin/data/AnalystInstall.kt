@@ -18,6 +18,9 @@ class AnalystInstall(private val context: Context) {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    private val npmReaSkill =
+        "/usr/local/lib/node_modules/rea-agents/skills/reverse-engineer-anything/SKILL.md"
+
     private val mcpPatch: String =
         """const fs=require('fs');const p='/root/.arin/cc-mcp.json';let j={mcpServers:{}};
 try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){}
@@ -34,15 +37,19 @@ fs.writeFileSync(p,JSON.stringify(j,null,2));
 """
 
     suspend fun ensure() = withContext(Dispatchers.IO) {
-        Linux.run("mkdir -p /root/.arin /root/.claude/skills/arin-analyst /root/.arin/skills/arin-analyst /root/.arin/pkg/skills/arin-analyst /root/.arin/skills/arin-rea")
+        Linux.run(
+            "mkdir -p /root/.arin /root/.arin/rea-skill-override /root/.arin/skills/arin-rea" +
+                " /root/.arin/pkg/skills/arin-analyst /root/.claude/skills/arin-analyst"
+        )
         put("/root/.arin/analyst.sh", Scripts.analystScript, true)
         put("/root/.arin/analyst-mcp.mjs", Scripts.mcpServer, false)
         put("/root/.arin/mcp-bridge.mjs", Scripts.bridge, false)
         put("/root/.arin/analyst-mcp-up.sh", Scripts.upScript, true)
         put("/root/.claude/skills/arin-analyst/SKILL.md", Scripts.skill, false)
-        put("/root/.arin/skills/arin-analyst/SKILL.md", Scripts.skill, false)
         put("/root/.arin/pkg/skills/arin-analyst/SKILL.md", Scripts.skill, false)
         put("/root/.arin/skills/arin-rea/SKILL.md", Scripts.skill, false)
+        put("/root/.arin/rea-skill-override/SKILL.md", Scripts.skill, false)
+        patchReaPackageSkill()
         registerMcp()
         setProfile()
         appendClaudeMd()
@@ -78,8 +85,11 @@ fs.writeFileSync(p,JSON.stringify(j,null,2));
         report.append(if (Linux.run("command -v node").ok) "node found\n" else "node MISSING\n")
         val health = Linux.run("curl -fsS http://127.0.0.1:8791/health", 15)
         report.append(if (health.ok) "bridge up on 8791\n" else "bridge DOWN\n")
-        val same = Linux.run("cmp -s /root/.arin/skills/arin-analyst/SKILL.md /root/.arin/skills/arin-rea/SKILL.md").ok
+        val same = Linux.run("cmp -s /root/.arin/skills/arin-rea/SKILL.md /root/.arin/rea-skill-override/SKILL.md").ok
         report.append(if (same) "skills identical\n" else "skill stale - copies differ\n")
+        val npmAligned = !exists(npmReaSkill) ||
+            Linux.run("grep -q 'arin-analyst:begin' '$npmReaSkill'").ok
+        report.append(if (npmAligned) "rea package skill aligned\n" else "rea package skill stale\n")
         report.append(if (exists("/root/.arin/cc-mcp.json.bak")) "backup present\n" else "no backup\n")
         report.toString().trim()
     }
@@ -110,6 +120,15 @@ fs.writeFileSync(p,JSON.stringify(j,null,2));
         if (Linux.run("grep -q 'arin-analyst:begin' /root/.claude/CLAUDE.md").ok) return
         put("/root/.arin/.claude-block.md", Scripts.claudeMdBlock, false)
         Linux.run("cat /root/.arin/.claude-block.md >> /root/.claude/CLAUDE.md")
+    }
+
+    /** Appends the analyst section to the rea package copy exactly once, so `rea doctor` sees no drift. */
+    private suspend fun patchReaPackageSkill() {
+        if (!exists(npmReaSkill)) return
+        if (Linux.run("grep -q 'arin-analyst:begin' '$npmReaSkill'").ok) return
+        Linux.run("cp -f '$npmReaSkill' '$npmReaSkill.bak'")
+        put("/root/.arin/.skill-section.md", "\n<!-- arin-analyst:begin -->\n" + Scripts.skill + "<!-- arin-analyst:end -->\n", false)
+        Linux.run("cat /root/.arin/.skill-section.md >> '$npmReaSkill'")
     }
 
     private suspend fun exists(path: String): Boolean = Linux.run("test -e '$path'").ok

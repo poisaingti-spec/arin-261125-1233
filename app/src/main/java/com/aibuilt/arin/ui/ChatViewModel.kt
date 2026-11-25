@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.aibuilt.arin.data.AnalystCall
 import com.aibuilt.arin.data.AnalystInstall
 import com.aibuilt.arin.data.AnalystLane
 import com.aibuilt.arin.data.AnalystRouter
@@ -64,11 +63,16 @@ class ChatViewModel(
 
     fun openLast() {
         viewModelScope.launch {
-            val existing = container.chats.lastFor(tab) ?: container.chats.create(tab)
+            val existing = container.chats.lastFor(tab) ?: run {
+                val fresh = container.chats.create(tab)
+                AnalystLane.set(context, fresh.id, container.settings.snapshot().laneDefault)
+                fresh
+            }
             chatId = existing.id
-            val def = container.settings.snapshot().laneDefault
-            AnalystLane.set(context, existing.id, AnalystLane.get(context, existing.id) && existing.id == chatId || def && existing.messages.isEmpty())
-            _ui.value = _ui.value.copy(chat = container.chats.chat(existing.id), laneOn = AnalystLane.get(context, existing.id))
+            _ui.value = _ui.value.copy(
+                chat = container.chats.chat(existing.id),
+                laneOn = AnalystLane.get(context, existing.id)
+            )
         }
     }
 
@@ -77,7 +81,11 @@ class ChatViewModel(
             val fresh = container.chats.create(tab)
             chatId = fresh.id
             AnalystLane.set(context, fresh.id, container.settings.snapshot().laneDefault)
-            _ui.value = _ui.value.copy(chat = fresh, laneOn = AnalystLane.get(context, fresh.id), pendingAttachments = emptyList())
+            _ui.value = _ui.value.copy(
+                chat = fresh,
+                laneOn = AnalystLane.get(context, fresh.id),
+                pendingAttachments = emptyList()
+            )
         }
     }
 
@@ -158,7 +166,8 @@ class ChatViewModel(
             Tab.REA -> prefs.modelRea
             Tab.UPDATE -> prefs.modelUpdate
         }
-        val laneOn = AnalystLane.get(context, id) && container.install.bridge.value == AnalystInstall.Bridge.UP
+        val laneOn = AnalystLane.get(context, id)
+        val codeQuestion = AnalystRouter.isCodeQuestion(text)
 
         val expanded = container.attachments.expand(attached)
         val manifest = AttachmentManifest.build(expanded)
@@ -169,19 +178,28 @@ class ChatViewModel(
         var failures = 0
 
         // Analyst lane: only interrogate-this-code work, capped per tab, retried once, never stalls.
-        if (laneOn && AnalystRouter.isCodeQuestion(text)) {
+        if (laneOn && codeQuestion) {
             val cap = container.calls.cap(tab)
-            append(MsgRole.ASK, "📞 Asking Claude…\n\"$text\"\n${Locator.describe(text, files)}")
-            val result = container.calls.ask(text + "\n\n" + manifest, files)
-            if (result.ok) {
-                answers++
-                append(MsgRole.ANALYST, "📞 Claude's answer\n${result.answer}")
-            } else {
-                failures++
-                append(MsgRole.NOTE, "📞 Claude unreachable — carrying on without it")
+            if (container.install.bridge.value == AnalystInstall.Bridge.DOWN) {
+                append(MsgRole.NOTE, "📞 The asker service is down — restarting it before asking.")
+                container.install.bringBridgeUp()
             }
-            if (container.calls.usedThisTurn() >= cap) {
-                append(MsgRole.NOTE, "📞 Call budget reached ($cap this turn) — answering the rest myself.")
+            if (container.calls.capLeft(tab) <= 0) {
+                append(MsgRole.NOTE, "📞 Call budget reached ($cap this turn) — carrying on without it.")
+            } else {
+                append(
+                    MsgRole.ASK,
+                    "📞 Asking Claude…\n\"$text\"\n${Locator.describe(text, files)}"
+                )
+                val result = container.calls.ask(text + "\n\n" + manifest, files)
+                if (result.ok) {
+                    answers++
+                    append(MsgRole.ANALYST, "📞 Claude's answer\n${result.answer}")
+                } else {
+                    failures++
+                    append(MsgRole.NOTE, "📞 Claude unreachable — carrying on without it")
+                    append(MsgRole.NOTE, "✍️ Doing this by hand — verify .locals and the surrounding opcodes before applying anything.")
+                }
             }
         }
 
@@ -198,11 +216,15 @@ class ChatViewModel(
         }
 
         var shown = answer
-        if (laneOn && AnalystRouter.isCodeQuestion(text) && answers == 0) {
+        if (codeQuestion && answers == 0 && failures == 0) {
             shown = "✍️ DeepSeek answered alone — Claude not asked.\n\n$shown"
         }
-        if (laneOn && (answers + failures) > 0) {
-            shown += "\n\n📞 Claude consulted ${answers + failures} times this turn ($answers answers, $failures failures)."
+        val consulted = answers + failures
+        if (consulted > 0) {
+            val times = if (consulted == 1) "time" else "times"
+            val answerWord = if (answers == 1) "answer" else "answers"
+            val failureWord = if (failures == 1) "failure" else "failures"
+            shown += "\n\n📞 Claude consulted $consulted $times this turn ($answers $answerWord, $failures $failureWord)."
         }
         append(MsgRole.MODEL, shown)
     }
@@ -219,13 +241,16 @@ class ChatViewModel(
         append(" and no \"for personal use only\" wording. Give real paths and real opcodes.\n")
         append("Tab: ${chat.tab}. Reverse engineering: ${if (chat.reaOn) "on" else "off"}.\n")
         when (chat.tab) {
-            Tab.REA -> append("You are in the reverse-engineering lane: every tool is available, decode, patch, sign.\n")
+            Tab.REA -> append("You are in the reverse-engineering lane: decode, patch, sign, and do the work rather than describing it.\n")
             Tab.UPDATE -> append("You are in the Update Arin lane: read-only inspection, changes are described not applied.\n")
             Tab.CHAT -> Unit
         }
         append("\nImages: ${vision.path}\n")
         append("\n$manifest\n")
         if (vision.described.isNotEmpty()) append("Description files: ${vision.described.joinToString()}\n")
+        append("\nEvery tool is available in this tab, REA included: shell commands, file read and write,")
+        append(" pictures, video, the browser, phone control, building and scheduling.")
+        append(" Use them instead of describing.\n")
         if (laneOn) {
             append("\nClaude answered $answers and failed $failures this turn. Its answers are a lead:")
             append(" verify .locals and the surrounding opcodes before applying anything.\n")

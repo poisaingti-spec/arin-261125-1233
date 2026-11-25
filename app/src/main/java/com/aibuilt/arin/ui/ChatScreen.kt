@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -32,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +61,7 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf(false) }
 
     LaunchedEffect(tab) { vm.openLast() }
 
@@ -82,6 +85,7 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
                 laneOn = ui.laneOn,
                 bridge = ui.bridge,
                 onNew = { vm.newChat() },
+                onRefresh = { vm.refreshBridge() },
                 menuOpen = { menu = true }
             )
             DropdownMenu(
@@ -109,7 +113,10 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text("Chat info") },
-                    onClick = { menu = false }
+                    onClick = {
+                        menu = false
+                        info = true
+                    }
                 )
             }
         }
@@ -197,6 +204,39 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
             }
         }
     }
+
+    if (info) {
+        val chat = ui.chat
+        val model = when (tab) {
+            Tab.CHAT -> ui.prefs.modelChat
+            Tab.REA -> ui.prefs.modelRea
+            Tab.UPDATE -> ui.prefs.modelUpdate
+        }
+        AlertDialog(
+            onDismissRequest = { info = false },
+            title = { Text("Chat info") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Title: ${chat?.title ?: "—"}")
+                    Text("Tab: ${tab.name.lowercase()}")
+                    Text("Reverse engineering: ${if (chat?.reaOn == true) "on" else "off"}")
+                    Text("Talk to Claude: ${if (ui.laneOn) "on" else "off"}")
+                    Text(
+                        "Claude line: " + when (ui.bridge) {
+                            AnalystInstall.Bridge.UP -> "up on port 8791"
+                            AnalystInstall.Bridge.DOWN -> "down — the tab answers alone"
+                            AnalystInstall.Bridge.UNKNOWN -> "not checked yet"
+                        }
+                    )
+                    Text("Model: $model")
+                    Text("Messages: ${chat?.messages?.size ?: 0}")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { info = false }) { Text("Close") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -205,6 +245,7 @@ private fun TopBar(
     laneOn: Boolean,
     bridge: AnalystInstall.Bridge,
     onNew: () -> Unit,
+    onRefresh: () -> Unit,
     menuOpen: () -> Unit
 ) {
     Surface(tonalElevation = 2.dp) {
@@ -221,8 +262,9 @@ private fun TopBar(
                     Spacer(Modifier.width(6.dp))
                 }
                 if (bridge == AnalystInstall.Bridge.DOWN) {
-                    Text("line down", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = onRefresh) {
+                        Text("line down — restart", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 IconButton(onClick = onNew) { Icon(Icons.Filled.Add, "new chat") }
                 IconButton(onClick = menuOpen) { Icon(Icons.Filled.MoreVert, "menu") }
