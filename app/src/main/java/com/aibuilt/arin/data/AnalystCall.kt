@@ -1,5 +1,3 @@
-=== ABOUT: Makes one phone call to Claude, retries once if it fails, and never lets a dead line stop the answer ===
-```kotlin
 package com.aibuilt.arin.data
 
 import com.aibuilt.arin.model.Tab

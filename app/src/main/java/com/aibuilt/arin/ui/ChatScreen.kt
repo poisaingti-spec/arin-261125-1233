@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -41,20 +40,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aibuilt.arin.data.AnalystInstall
 import com.aibuilt.arin.data.AppContainer
 import com.aibuilt.arin.model.AttachmentKind
 import com.aibuilt.arin.model.Message
 import com.aibuilt.arin.model.MsgRole
 import com.aibuilt.arin.model.Tab
-import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
 fun ChatScreen(container: AppContainer, tab: Tab) {
-    val vm: ChatViewModel = viewModel(factory = ChatViewModel.factory(LocalContext(), container, tab))
+    val context = LocalContext.current
+    val vm: ChatViewModel = viewModel(factory = ChatViewModel.factory(context, container, tab))
     val ui by vm.ui.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
@@ -71,27 +72,61 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopBar(
-            title = when (tab) {
-                Tab.CHAT -> ui.chat?.title ?: "Chat"
-                Tab.REA -> "Reverse engineering"
-                Tab.UPDATE -> "Update Arin"
-            },
-            laneOn = ui.laneOn,
-            bridge = ui.bridge,
-            onNew = { vm.newChat() },
-            menuOpen = { menu = true }
-        )
-
-        menuAnchor@{}
+        Box(Modifier.fillMaxWidth()) {
+            TopBar(
+                title = when (tab) {
+                    Tab.CHAT -> ui.chat?.title ?: "Chat"
+                    Tab.REA -> "Reverse engineering"
+                    Tab.UPDATE -> "Update Arin"
+                },
+                laneOn = ui.laneOn,
+                bridge = ui.bridge,
+                onNew = { vm.newChat() },
+                menuOpen = { menu = true }
+            )
+            DropdownMenu(
+                expanded = menu,
+                onDismissRequest = { menu = false },
+                modifier = Modifier.align(Alignment.TopEnd)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Activate reverse engineering") },
+                    trailingIcon = {
+                        Switch(
+                            checked = ui.chat?.reaOn == true,
+                            onCheckedChange = { on -> vm.toggleRea(on) }
+                        )
+                    },
+                    onClick = { vm.toggleRea(!(ui.chat?.reaOn ?: false)) }
+                )
+                DropdownMenuItem(
+                    text = { Text("Talk to Claude") },
+                    trailingIcon = {
+                        Switch(checked = ui.laneOn, onCheckedChange = { on -> vm.toggleLane(on) })
+                    },
+                    onClick = { vm.toggleLane(!ui.laneOn) }
+                )
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("Chat info") },
+                    onClick = { menu = false }
+                )
+            }
+        }
 
         Box(Modifier.weight(1f)) {
-            if (ui.chat == null) {
+            val chat = ui.chat
+            if (chat == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Starting…")
                 }
-            } else if (ui.chat?.messages.isNullOrEmpty()) {
-                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            } else if (chat.messages.isEmpty()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
                         when (tab) {
                             Tab.REA -> "Paste smali or an APK question. Turn on Talk to Claude in the ⋮ menu and Claude is asked first."
@@ -108,10 +143,16 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(ui.chat?.messages ?: emptyList(), key = { it.id }) { m -> MessageRow(m) }
+                    items(chat.messages, key = { it.id }) { m -> MessageRow(m) }
                 }
             }
-            if (ui.sending) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
+            if (ui.sending) {
+                LinearProgressIndicator(
+                    Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                )
+            }
         }
 
         ui.error?.let { err ->
@@ -121,7 +162,12 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
         }
 
         if (ui.pendingAttachments.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 ui.pendingAttachments.forEach { a ->
                     AssistChip(
                         onClick = { vm.removeAttachment(a.id) },
@@ -132,7 +178,9 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
         }
 
         Row(
-            Modifier.fillMaxWidth().padding(8.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { picker.launch("*/*") }) { Icon(Icons.Filled.AttachFile, "attach") }
@@ -148,15 +196,6 @@ fun ChatScreen(container: AppContainer, tab: Tab) {
                 Icon(Icons.Filled.Send, "send")
             }
         }
-
-        Box {
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Chat info") },
-                    onClick = { menu = false }
-                )
-            }
-        }
     }
 }
 
@@ -169,20 +208,28 @@ private fun TopBar(
     menuOpen: () -> Unit
 ) {
     Surface(tonalElevation = 2.dp) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, maxLines = 1)
-            if (bridge == AnalystInstall.Bridge.DOWN) {
-                Text("line down", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.width(6.dp))
+        Column {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                if (laneOn) {
+                    Text("📞 on", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(6.dp))
+                }
+                if (bridge == AnalystInstall.Bridge.DOWN) {
+                    Text("line down", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(6.dp))
+                }
+                IconButton(onClick = onNew) { Icon(Icons.Filled.Add, "new chat") }
+                IconButton(onClick = menuOpen) { Icon(Icons.Filled.MoreVert, "menu") }
             }
-            IconButton(onClick = onNew) { Icon(Icons.Filled.Add, "new chat") }
-            IconButton(onClick = menuOpen) { Icon(Icons.Filled.MoreVert, "menu") }
+            HorizontalDivider()
         }
     }
-    HorizontalDivider()
 }
 
 @Composable
@@ -210,9 +257,6 @@ private fun MessageRow(m: Message) {
         }
     }
 }
-
-@Composable
-private fun LocalContext(): android.content.Context = androidx.compose.ui.platform.LocalContext.current
 
 @Composable
 fun ChatMenuItems(
