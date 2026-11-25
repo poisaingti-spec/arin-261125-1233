@@ -1,5 +1,3 @@
-=== ABOUT: Cuts a video into a few pictures and its sound track so the model can "watch" it ===
-```kotlin
 package com.aibuilt.arin.data
 
 import com.aibuilt.arin.model.Attachment

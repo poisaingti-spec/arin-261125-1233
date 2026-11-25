@@ -1,5 +1,3 @@
-=== ABOUT: The text of the small helper programs the app installs inside Linux: the Claude asker, the little service on port 8791 and the rules text ===
-```kotlin
 package com.aibuilt.arin.data
 
 object Scripts {

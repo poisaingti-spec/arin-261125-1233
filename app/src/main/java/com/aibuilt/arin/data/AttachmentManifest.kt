@@ -1,5 +1,3 @@
-=== ABOUT: Writes out every picture and video attached this turn with its real path inside Linux, so any tab can open it ===
-```kotlin
 package com.aibuilt.arin.data
 
 import com.aibuilt.arin.model.Attachment

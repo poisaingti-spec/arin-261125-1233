@@ -1,5 +1,3 @@
-=== ABOUT: Copies a picture or video you pick into the app's shared folder and remembers what kind it is ===
-```kotlin
 package com.aibuilt.arin.data
 
 import android.content.Context

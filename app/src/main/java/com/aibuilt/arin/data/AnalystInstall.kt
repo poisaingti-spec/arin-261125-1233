@@ -1,5 +1,3 @@
-=== ABOUT: Installs and repairs the Claude asker and its little service, keeps a backup and can restore it, all off the main thread ===
-```kotlin
 package com.aibuilt.arin.data
 
 import android.content.Context

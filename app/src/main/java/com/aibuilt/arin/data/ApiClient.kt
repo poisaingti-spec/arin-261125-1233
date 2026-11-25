@@ -1,5 +1,3 @@
-=== ABOUT: Talks to the chosen model over the internet, with or without pictures ===
-```kotlin
 package com.aibuilt.arin.data
 
 import kotlinx.coroutines.Dispatchers
